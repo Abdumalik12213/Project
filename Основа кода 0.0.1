@@ -1,1 +1,591 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+from pathlib import Path
+from dataclasses import dataclass
+from typing import List, Set, Optional
+import sqlite3
 
+# ==================== КОНСТАНТЫ ====================
+
+
+RECIPE_IMAGES_DIR = Path("recipe_images")
+RECIPE_IMAGES_DIR.mkdir(exist_ok=True)
+
+
+COLORS = {
+    'primary': '#2E7D32',      # Темно-зеленый
+    'primary_light': '#4CAF50', # Светло-зеленый
+    'secondary': '#1976D2',     # Синий
+    'background': '#F5F5F5',    # Светло-серый фон
+    'surface': '#FFFFFF',        # Белый
+    'text_primary': '#212121',   # Темный текст
+    'text_secondary': '#757575', # Серый текст
+    'success': '#4CAF50',        # Зеленый
+    'warning': '#FF9800',        # Оранжевый
+    'error': '#F44336',          # Красный
+    'border': '#E0E0E0'          # Серый для границ
+}
+
+
+ALL_INGREDIENTS = [
+    'Картошка', 'Морковь', 'Лук', 'Чеснок', 'Помидоры', 'Огурцы',
+    'Капуста', 'Свёкла', 'Перец', 'Грибы', 'Зелень',
+    'Курица', 'Говядина', 'Свинина', 'Фарш', 'Колбаса',
+    'Яйца', 'Молоко', 'Сметана', 'Масло', 'Сыр', 'Творог',
+    'Мука', 'Сахар', 'Соль', 'Перец', 'Рис', 'Гречка', 'Макароны'
+]
+
+# БАЗОВЫЕ РЕЦЕПТЫ (для первой версии)
+BASIC_RECIPES = [
+    # id, name, ingredients, instructions, category
+    (1, 'Яичница', 'Яйца, Масло, Соль', 
+     '1. Разогреть сковороду\n2. Разбить яйца\n3. Посолить\n4. Жарить 5 минут', 
+     'Завтраки', 10, 'Легкая'),
+    
+    (2, 'Омлет', 'Яйца, Молоко, Соль, Масло', 
+     '1. Взбить яйца с молоком\n2. Вылить на сковороду\n3. Жарить 7 минут', 
+     'Завтраки', 15, 'Легкая'),
+    
+    (3, 'Макароны по-флотски', 'Макароны, Фарш, Лук, Соль, Масло', 
+     '1. Отварить макароны\n2. Обжарить фарш с луком\n3. Смешать', 
+     'Основные блюда', 30, 'Легкая'),
+    
+    (4, 'Гречка с грибами', 'Гречка, Грибы, Лук, Масло, Соль', 
+     '1. Отварить гречку\n2. Обжарить грибы с луком\n3. Смешать', 
+     'Основные блюда', 35, 'Легкая'),
+    
+    (5, 'Картофельное пюре', 'Картошка, Молоко, Масло, Соль', 
+     '1. Сварить картошку\n2. Размять\n3. Добавить молоко и масло', 
+     'Гарниры', 25, 'Легкая'),
+    
+    (6, 'Салат из огурцов', 'Огурцы, Сметана, Соль, Зелень', 
+     '1. Нарезать огурцы\n2. Добавить сметану\n3. Посолить и перемешать', 
+     'Салаты', 10, 'Легкая'),
+    
+    (7, 'Бульон куриный', 'Курица, Морковь, Лук, Соль, Перец', 
+     '1. Залить курицу водой\n2. Добавить овощи\n3. Варить 1 час', 
+     'Супы', 70, 'Средняя'),
+    
+    (8, 'Рис отварной', 'Рис, Вода, Соль, Масло', 
+     '1. Промыть рис\n2. Залить водой 1:2\n3. Варить 20 минут', 
+     'Гарниры', 25, 'Легкая'),
+    
+    (9, 'Гренки', 'Хлеб, Яйца, Молоко, Масло', 
+     '1. Смешать яйца с молоком\n2. Обмакнуть хлеб\n3. Обжарить', 
+     'Завтраки', 15, 'Легкая'),
+    
+    (10, 'Чай', 'Чай, Вода, Сахар', 
+     '1. Вскипятить воду\n2. Заварить чай\n3. Добавить сахар', 
+     'Напитки', 5, 'Легкая'),
+]
+
+# ==================== КЛАССЫ ====================
+
+@dataclass
+class Recipe:
+    """Модель рецепта"""
+    id: int
+    name: str
+    ingredients: str
+    instructions: str
+    category: str
+    prep_time: int
+    difficulty: str
+    match_percentage: float = 0.0
+    matches: int = 0
+
+
+class DatabaseManager:
+    """Упрощенный менеджер базы данных"""
+    
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self.conn = None
+        self.cursor = None
+    
+    def connect(self):
+        """Подключение к базе данных"""
+        self.conn = sqlite3.connect(self.db_path)
+        self.cursor = self.conn.cursor()
+        return self
+    
+    def init_database(self):
+        """Инициализация базы данных"""
+        # Создаем таблицу
+        self.cursor.execute('''
+        CREATE TABLE IF NOT EXISTS recipes (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            ingredients TEXT NOT NULL,
+            instructions TEXT,
+            category TEXT,
+            prep_time INTEGER,
+            difficulty TEXT
+        )
+        ''')
+        
+        # Очищаем таблицу
+        self.cursor.execute('DELETE FROM recipes')
+        
+        # Загружаем рецепты
+        for recipe in BASIC_RECIPES:
+            self.cursor.execute('''
+            INSERT INTO recipes (id, name, ingredients, instructions, category, prep_time, difficulty)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', recipe)
+        
+        self.conn.commit()
+        print(f"✅ Загружено {len(BASIC_RECIPES)} рецептов")
+        return self
+    
+    def search_recipes(self, selected_ingredients: Set[str]) -> List[Recipe]:
+        """Поиск рецептов по ингредиентам"""
+        if not selected_ingredients:
+            return []
+        
+        self.cursor.execute('SELECT * FROM recipes')
+        all_recipes = self.cursor.fetchall()
+        
+        results = []
+        
+        for row in all_recipes:
+            recipe = Recipe(
+                id=row[0],
+                name=row[1],
+                ingredients=row[2],
+                instructions=row[3],
+                category=row[4],
+                prep_time=row[5],
+                difficulty=row[6]
+            )
+            
+            # Считаем совпадения
+            recipe_ingredients = [ing.strip().lower() for ing in recipe.ingredients.split(',')]
+            selected_lower = [ing.lower() for ing in selected_ingredients]
+            
+            matches = 0
+            for selected in selected_lower:
+                for recipe_ing in recipe_ingredients:
+                    if selected in recipe_ing or recipe_ing in selected:
+                        matches += 1
+                        break
+            
+            if matches > 0:
+                recipe.matches = matches
+                recipe.match_percentage = (matches / len(recipe_ingredients)) * 100
+                results.append(recipe)
+        
+        # Сортируем по проценту совпадения
+        results.sort(key=lambda x: x.match_percentage, reverse=True)
+        return results
+
+
+class KitchenAssistant:
+    """Главный класс приложения"""
+    
+    def __init__(self, root):
+        self.root = root
+        self.root.title("🍳 Кухонный помощник v0.0.1")
+        self.root.configure(bg=COLORS['background'])
+        
+        # Инициализация
+        self.db = DatabaseManager('recipes.db').connect()
+        self.db.init_database()
+        
+        # Данные
+        self.selected_ingredients = set()
+        
+        # Настройка интерфейса
+        self.setup_ui()
+        
+        # Загружаем начальные данные
+        self.update_products_list()
+    
+    def setup_ui(self):
+        """Настройка интерфейса"""
+        # Основной контейнер
+        main = tk.Frame(self.root, bg=COLORS['background'])
+        main.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Заголовок
+        header = tk.Frame(main, bg=COLORS['background'])
+        header.pack(fill=tk.X, pady=(0, 10))
+        
+        tk.Label(header, text="🍳 Кухонный помощник", 
+                font=('Arial', 24, 'bold'), 
+                bg=COLORS['background'],
+                fg=COLORS['primary']).pack(side=tk.LEFT)
+        
+        tk.Label(header, text="v0.0.1", 
+                font=('Arial', 10),
+                bg=COLORS['background'],
+                fg=COLORS['text_secondary']).pack(side=tk.LEFT, padx=10)
+        
+        # Основное содержимое - две колонки
+        content = tk.Frame(main, bg=COLORS['background'])
+        content.pack(fill=tk.BOTH, expand=True)
+        
+        # Левая колонка - продукты
+        left = tk.Frame(content, bg=COLORS['surface'], 
+                       relief=tk.RAISED, bd=1)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        
+        # Заголовок продуктов
+        tk.Label(left, text="📋 Список продуктов", 
+                font=('Arial', 14, 'bold'),
+                bg=COLORS['surface'],
+                fg=COLORS['text_primary']).pack(pady=10)
+        
+        # Поиск по продуктам
+        search_frame = tk.Frame(left, bg=COLORS['surface'])
+        search_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        tk.Label(search_frame, text="🔍 Поиск:", 
+                bg=COLORS['surface']).pack(side=tk.LEFT)
+        
+        self.search_var = tk.StringVar()
+        self.search_var.trace('w', lambda *args: self.update_products_list())
+        
+        search_entry = tk.Entry(search_frame, textvariable=self.search_var,
+                               bg=COLORS['background'])
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        
+        # Список продуктов с прокруткой
+        list_frame = tk.Frame(left, bg=COLORS['surface'])
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        scrollbar = tk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.products_listbox = tk.Listbox(list_frame,
+                                          yscrollcommand=scrollbar.set,
+                                          selectmode=tk.MULTIPLE,
+                                          bg='white',
+                                          font=('Arial', 11),
+                                          height=20)
+        self.products_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar.config(command=self.products_listbox.yview)
+        
+        # Кнопки управления
+        btn_frame = tk.Frame(left, bg=COLORS['surface'])
+        btn_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Button(btn_frame, text="➕ Добавить выбранные",
+                 command=self.add_selected,
+                 bg=COLORS['primary'],
+                 fg='white',
+                 padx=10, pady=5).pack(side=tk.LEFT, padx=2)
+        
+        tk.Button(btn_frame, text="🔄 Очистить поиск",
+                 command=self.clear_search,
+                 bg=COLORS['text_secondary'],
+                 fg='white',
+                 padx=10, pady=5).pack(side=tk.LEFT, padx=2)
+        
+        # Правая колонка - выбранное и рецепты
+        right = tk.Frame(content, bg=COLORS['surface'],
+                        relief=tk.RAISED, bd=1)
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        
+        # Выбранные продукты
+        selected_frame = tk.Frame(right, bg=COLORS['surface'])
+        selected_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Label(selected_frame, text="✅ Выбранные продукты:",
+                font=('Arial', 12, 'bold'),
+                bg=COLORS['surface']).pack(anchor=tk.W)
+        
+        self.selected_label = tk.Label(selected_frame,
+                                      text="(нет выбранных продуктов)",
+                                      bg=COLORS['surface'],
+                                      fg=COLORS['text_secondary'],
+                                      wraplength=300,
+                                      justify=tk.LEFT)
+        self.selected_label.pack(anchor=tk.W, pady=5)
+        
+        # Кнопки для выбранных продуктов
+        selected_btn_frame = tk.Frame(selected_frame, bg=COLORS['surface'])
+        selected_btn_frame.pack(fill=tk.X, pady=5)
+        
+        tk.Button(selected_btn_frame, text="🔍 Найти рецепты",
+                 command=self.find_recipes,
+                 bg=COLORS['success'],
+                 fg='white',
+                 padx=15, pady=5).pack(side=tk.LEFT, padx=2)
+        
+        tk.Button(selected_btn_frame, text="🗑 Очистить все",
+                 command=self.clear_selected,
+                 bg=COLORS['error'],
+                 fg='white',
+                 padx=15, pady=5).pack(side=tk.LEFT, padx=2)
+        
+        # Рецепты
+        recipes_frame = tk.Frame(right, bg=COLORS['surface'])
+        recipes_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        tk.Label(recipes_frame, text="🍽 Найденные рецепты:",
+                font=('Arial', 12, 'bold'),
+                bg=COLORS['surface']).pack(anchor=tk.W)
+        
+        # Список рецептов с прокруткой
+        recipe_list_frame = tk.Frame(recipes_frame, bg=COLORS['surface'])
+        recipe_list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        recipe_scrollbar = tk.Scrollbar(recipe_list_frame)
+        recipe_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.recipes_listbox = tk.Listbox(recipe_list_frame,
+                                         yscrollcommand=recipe_scrollbar.set,
+                                         bg='white',
+                                         font=('Arial', 11),
+                                         height=15)
+        self.recipes_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        recipe_scrollbar.config(command=self.recipes_listbox.yview)
+        
+        # Кнопка просмотра рецепта
+        tk.Button(recipes_frame, text="📖 Показать рецепт",
+                 command=self.show_recipe,
+                 bg=COLORS['secondary'],
+                 fg='white',
+                 padx=20, pady=5).pack(pady=5)
+        
+        # Статус бар
+        status = tk.Frame(main, bg=COLORS['surface'], height=25,
+                         relief=tk.SUNKEN, bd=1)
+        status.pack(fill=tk.X, pady=(10, 0))
+        status.pack_propagate(False)
+        
+        self.status_label = tk.Label(status,
+                                     text="✅ Готов к работе",
+                                     bg=COLORS['surface'],
+                                     fg=COLORS['text_secondary'],
+                                     anchor=tk.W)
+        self.status_label.pack(fill=tk.X, padx=5)
+    
+    def update_products_list(self):
+        """Обновляет список продуктов"""
+        self.products_listbox.delete(0, tk.END)
+        
+        # Фильтруем по поиску
+        search = self.search_var.get().lower()
+        products = [p for p in ALL_INGREDIENTS 
+                   if not search or search in p.lower()]
+        
+        for product in sorted(products):
+            if product in self.selected_ingredients:
+                self.products_listbox.insert(tk.END, f"✓ {product}")
+            else:
+                self.products_listbox.insert(tk.END, f"  {product}")
+    
+    def add_selected(self):
+        """Добавляет выбранные продукты"""
+        selection = self.products_listbox.curselection()
+        
+        if not selection:
+            messagebox.showinfo("Информация", "Выберите продукты из списка")
+            return
+        
+        added = 0
+        for index in selection:
+            # Убираем префикс "✓ " или "  "
+            item = self.products_listbox.get(index)[2:]
+            if item not in self.selected_ingredients:
+                self.selected_ingredients.add(item)
+                added += 1
+        
+        if added > 0:
+            self.update_selected_display()
+            self.update_products_list()
+            self.update_status(f"✅ Добавлено {added} продуктов")
+        else:
+            self.update_status("ℹ️ Продукты уже были выбраны")
+    
+    def update_selected_display(self):
+        """Обновляет отображение выбранных продуктов"""
+        if not self.selected_ingredients:
+            self.selected_label.config(text="(нет выбранных продуктов)")
+        else:
+            products = sorted(list(self.selected_ingredients))
+            text = " • ".join(products)
+            self.selected_label.config(text=text)
+    
+    def clear_search(self):
+        """Очищает поле поиска"""
+        self.search_var.set("")
+        self.update_products_list()
+    
+    def clear_selected(self):
+        """Очищает все выбранные продукты"""
+        self.selected_ingredients.clear()
+        self.update_selected_display()
+        self.update_products_list()
+        self.recipes_listbox.delete(0, tk.END)
+        self.update_status("🗑 Выбор очищен")
+    
+    def find_recipes(self):
+        """Ищет рецепты по выбранным продуктам"""
+        if not self.selected_ingredients:
+            messagebox.showinfo("Информация", 
+                "Сначала выберите продукты из списка слева")
+            return
+        
+        # Ищем рецепты
+        recipes = self.db.search_recipes(self.selected_ingredients)
+        
+        # Обновляем список
+        self.recipes_listbox.delete(0, tk.END)
+        
+        if not recipes:
+            self.recipes_listbox.insert(tk.END, 
+                "😔 Рецепты не найдены. Попробуйте другие продукты.")
+            self.update_status("❌ Рецепты не найдены")
+        else:
+            for recipe in recipes:
+                match = int(recipe.match_percentage)
+                self.recipes_listbox.insert(tk.END,
+                    f"{recipe.name} [{match}%] - {recipe.category}")
+            self.update_status(f"✅ Найдено {len(recipes)} рецептов")
+    
+    def show_recipe(self):
+        """Показывает выбранный рецепт"""
+        selection = self.recipes_listbox.curselection()
+        
+        if not selection:
+            messagebox.showinfo("Информация", "Выберите рецепт из списка")
+            return
+        
+        # Получаем название рецепта
+        recipe_text = self.recipes_listbox.get(selection[0])
+        
+        if "Рецепты не найдены" in recipe_text:
+            return
+        
+        # Извлекаем название (до [)
+        recipe_name = recipe_text.split(' [')[0]
+        
+        # Ищем рецепт в базе
+        self.db.cursor.execute(
+            'SELECT * FROM recipes WHERE name = ?', (recipe_name,))
+        recipe_data = self.db.cursor.fetchone()
+        
+        if recipe_data:
+            self.show_recipe_details(recipe_data)
+    
+    def show_recipe_details(self, recipe_data):
+        """Показывает детали рецепта в новом окне"""
+        # Создаем окно
+        window = tk.Toplevel(self.root)
+        window.title(f"Рецепт: {recipe_data[1]}")
+        window.geometry("500x600")
+        window.configure(bg='white')
+        
+        # Заголовок
+        tk.Label(window, text=recipe_data[1],
+                font=('Arial', 18, 'bold'),
+                bg=COLORS['primary'],
+                fg='white',
+                pady=10).pack(fill=tk.X)
+        
+        # Информация
+        info_frame = tk.Frame(window, bg='white')
+        info_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        tk.Label(info_frame,
+                text=f"Категория: {recipe_data[4]}",
+                bg='white',
+                font=('Arial', 11)).pack(anchor=tk.W)
+        
+        tk.Label(info_frame,
+                text=f"Время: {recipe_data[5]} мин",
+                bg='white',
+                font=('Arial', 11)).pack(anchor=tk.W)
+        
+        tk.Label(info_frame,
+                text=f"Сложность: {recipe_data[6]}",
+                bg='white',
+                font=('Arial', 11)).pack(anchor=tk.W)
+        
+        # Ингредиенты
+        tk.Label(window, text="📝 Ингредиенты:",
+                font=('Arial', 12, 'bold'),
+                bg='white').pack(anchor=tk.W, padx=20, pady=(10,5))
+        
+        ingredients_frame = tk.Frame(window, bg='#F5F5F5',
+                                    relief=tk.SUNKEN, bd=1)
+        ingredients_frame.pack(fill=tk.X, padx=20, pady=5)
+        
+        ingredients_text = tk.Text(ingredients_frame,
+                                   height=5,
+                                   font=('Arial', 11),
+                                   wrap=tk.WORD,
+                                   bg='#F5F5F5')
+        ingredients_text.pack(fill=tk.X, padx=5, pady=5)
+        ingredients_text.insert('1.0', recipe_data[2])
+        ingredients_text.config(state='disabled')
+        
+        # Инструкция
+        tk.Label(window, text="👨‍🍳 Приготовление:",
+                font=('Arial', 12, 'bold'),
+                bg='white').pack(anchor=tk.W, padx=20, pady=(10,5))
+        
+        instruction_frame = tk.Frame(window, bg='#F5F5F5',
+                                    relief=tk.SUNKEN, bd=1)
+        instruction_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
+        
+        instruction_text = tk.Text(instruction_frame,
+                                   font=('Arial', 11),
+                                   wrap=tk.WORD,
+                                   bg='#F5F5F5')
+        instruction_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        instruction_text.insert('1.0', recipe_data[3])
+        instruction_text.config(state='disabled')
+        
+        # Кнопка закрытия
+        tk.Button(window, text="✕ Закрыть",
+                 command=window.destroy,
+                 bg=COLORS['error'],
+                 fg='white',
+                 font=('Arial', 10, 'bold'),
+                 padx=20, pady=5).pack(pady=10)
+        
+        # Центрируем окно
+        window.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 500) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 600) // 2
+        window.geometry(f"+{x}+{y}")
+    
+    def update_status(self, message):
+        """Обновляет статусную строку"""
+        self.status_label.config(text=message)
+
+
+# ==================== ЗАПУСК ====================
+
+if __name__ == "__main__":
+    # Создаем главное окно
+    root = tk.Tk()
+    
+    # Устанавливаем размер и положение
+    root.geometry("1000x700")
+    
+    # Центрируем окно
+    root.update_idletasks()
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    x = (screen_width - 1000) // 2
+    y = (screen_height - 700) // 2
+    root.geometry(f"+{x}+{y}")
+    
+    # Запускаем приложение
+    app = KitchenAssistant(root)
+    
+    print("=" * 50)
+    print("🍳 Кухонный помощник v0.0.1 запущен!")
+    print("=" * 50)
+    print(f"📋 Продуктов: {len(ALL_INGREDIENTS)}")
+    print(f"📚 Рецептов: {len(BASIC_RECIPES)}")
+    print("=" * 50)
+    
+    root.mainloop()
